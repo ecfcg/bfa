@@ -1,0 +1,9 @@
+[package]
+name = "bfa"
+version = "0.1.0"
+authors = ["nabe <e.cfcg9dagego9h9edeofadafeeoed@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+clap = {version = "2.33.1"}
+md-5 = {version = "0.9.1"}
