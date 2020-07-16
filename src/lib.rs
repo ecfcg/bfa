@@ -6,7 +6,6 @@ struct RawStr {
     all_chars: Vec<u8>,
     max_point: usize,
     value: Vec<usize>,
-    point: usize,
 }
 
 impl RawStr {
@@ -21,34 +20,41 @@ impl RawStr {
         RawStr {
             all_chars: all_chars,
             max_point: max_point,
-            value: vec![0],
-            point: 0,
+            value: Vec::new(),
         }
     }
 
     fn next(self: &mut Self) -> String {
+        self.increment();
+
         let v = self
             .value
             .iter()
             .map(|&p| self.all_chars[p])
             .collect::<Vec<u8>>();
 
-        self.increment();
         String::from_utf8(v).unwrap()
     }
 
     fn increment(self: &mut Self) {
-        self.value = Vec::with_capacity(self.value.len() + 1);
-        self.point += 1;
-
-        let mut devided = self.point;
+        let mut new_value = Vec::with_capacity(self.value.len() + 1);
+        let mut point;
+        let mut it = self.value.iter();
         loop {
-            self.value.push(devided % self.max_point);
-            devided /= self.max_point;
-            if devided == 0 {
+            point = match it.next() {
+                Some(i) => i + 1,
+                None => 0,
+            };
+
+            if point == self.max_point {
+                new_value.push(0);
+            } else {
+                new_value.push(point);
+                new_value.append(&mut it.map(|&i| i).collect());
                 break;
             }
         }
+        self.value = new_value;
     }
 }
 
@@ -68,7 +74,7 @@ impl Md5Decrypter {
         loop {
             let raw_str = raw.next();
             if raw_str.len() > max_len {
-                break;
+                return;
             }
 
             if self.compare(&raw_str, &hash) {
