@@ -1,137 +1,98 @@
 use md5::{Digest, Md5};
-use rayon::prelude::*;
-use std::sync::Mutex;
+use std::assert;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
-const ASCII: &'static str = r##" abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()~+=_-[]{}:`\|'"<>?,./;"##;
+mod code_points;
+use code_points::CodePoints;
 
-struct RawStr {
-    all_chars: Vec<u8>,
-    max_point: usize,
-    value: Vec<usize>,
-    step: usize,
-}
+pub fn clack(hex_str: String, max_len: usize, thread_num: usize) {
+    let hex = Arc::new(to_hex(hex_str));
+    let finished = Arc::new(Mutex::new(false));
+    let mut threads = Vec::with_capacity(thread_num);
 
-impl RawStr {
-    fn new(step: usize, start: usize) -> Self {
-        let all_chars = ASCII
-            .as_bytes()
-            .into_iter()
-            .map(|&u| u)
-            .collect::<Vec<u8>>();
-        let max_point = all_chars.len();
+    for start in 0..thread_num {
+        let arc_hex_val = hex.clone();
+        let arc_finished = finished.clone();
 
-        RawStr {
-            all_chars: all_chars,
-            max_point: max_point,
-            value: vec![start],
-            step: step,
-        }
-    }
-
-    fn next(self: &mut Self) -> String {
-        let v = self
-            .value
-            .iter()
-            .map(|&p| self.all_chars[p])
-            .collect::<Vec<u8>>();
-
-        self.increment();
-        String::from_utf8(v).unwrap()
-    }
-
-    fn increment(self: &mut Self) {
-        let mut new_value = Vec::with_capacity(self.value.len() + 1);
-        let point;
-
-        point = self.value[0] + self.step;
-
-        if point >= self.max_point {
-            new_value.push(point % self.max_point);
-            new_value.append(&mut self.carry());
-        } else {
-            new_value.push(point);
-            new_value.append(&mut self.value.iter().skip(1).map(|&i| i).collect());
-        }
-
-        self.value = new_value;
-    }
-
-    fn carry(self: &Self) -> Vec<usize> {
-        let mut carried = Vec::with_capacity(self.value.len());
-        let mut it = self.value.iter().skip(1);
-        let mut point;
-        loop {
-            point = match it.next() {
-                Some(i) => i + 1,
-                None => 0,
-            };
-
-            if point == self.max_point {
-                carried.push(0);
-            } else {
-                carried.push(point);
-                carried.append(&mut it.map(|&i| i).collect());
-                break;
-            }
-        }
-
-        carried
-    }
-}
-
-pub struct Md5Decrypter {}
-
-impl Md5Decrypter {
-    pub fn new() -> Self {
-        Md5Decrypter {}
-    }
-
-    pub fn decrypt(self: &Self, hash: String, max_len: usize, thread_num: usize) {
-        let lut = (0u8..=255).map(|n| format!("{:02X}", n)).collect();
-        let xs: Vec<usize> = (0..thread_num).collect();
-        let m = Mutex::new(false);
-
-        xs.par_iter().for_each(|&start| {
-            let mut raw = RawStr::new(thread_num, start);
-            let mut i = 0;
+        threads.push(thread::spawn(move || {
+            let mut cps = CodePoints::new(thread_num, start);
+            let mut checked = 0;
 
             loop {
-                let raw_str = raw.next();
+                let cp = cps.next();
+                let hashed_cp = to_hash(&cp);
 
-                if raw_str.len() > max_len {
+                if cp.len() > max_len {
                     return;
                 }
 
-                if self.compare(&raw_str, &hash, &lut) {
-                    println!("{}", raw_str);
-                    let mut flag = m.lock().unwrap();
+                if *arc_hex_val == hashed_cp {
+                    let mut flag = arc_finished.lock().unwrap();
                     *flag = true;
+                    println!("{}", String::from_utf8(cp).unwrap());
                     return;
                 }
 
-                i += 1;
+                checked += 1;
 
-                if i == 10000 {
-                    i = 0;
-                    let flag = m.lock().unwrap();
-
+                if checked == 10000 {
+                    let flag = arc_finished.lock().unwrap();
                     if *flag {
                         return;
                     }
+                    checked = 0;
                 }
             }
-        });
+        }));
     }
 
-    fn compare(self: &Self, raw_str: &String, hash: &str, lut: &Vec<String>) -> bool {
-        let mut hasher = Md5::new();
-        hasher.update(raw_str.as_bytes());
-        let hashed = hasher
-            .finalize()
-            .as_slice()
-            .iter()
-            .map(|&u| lut.get(u as usize).unwrap().to_owned())
-            .collect::<String>();
-        *hash == hashed
+    for handle in threads {
+        handle.join().unwrap();
+    }
+}
+
+fn to_hex(hash: String) -> Vec<u8> {
+    assert!(hash.len() % 2 == 0);
+    let mut v = Vec::with_capacity(hash.len() / 2);
+    let c = hash.chars().collect::<Vec<char>>();
+    let mut n = 0;
+    for i in 0..c.len() {
+        let x = match c[i] {
+            '0'..='9' => c[i] as u8 - '0' as u8,
+            'a'..='f' => c[i] as u8 - 'a' as u8 + 10,
+            'A'..='F' => c[i] as u8 - 'A' as u8 + 10,
+            _ => panic!(format!("Not hex character:{}", c[i])),
+        };
+
+        if i % 2 == 0 {
+            n = x << 4;
+        } else {
+            n += x;
+            v.push(n);
+            n = 0;
+        }
+    }
+
+    v
+}
+
+fn to_hash(code_points: &Vec<u8>) -> Vec<u8> {
+    let mut hasher = Md5::new();
+    hasher.update(code_points.as_slice());
+    hasher.finalize().as_slice().iter().map(|&u| u).collect()
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test() {
+        assert_eq!(to_hex(String::from("01")), vec![1]);
+        assert_eq!(
+            to_hex(String::from("0123456789ABCDEFabcdef")),
+            vec![0x1, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef]
+        );
     }
 }

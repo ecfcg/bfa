@@ -38,12 +38,5 @@ fn main() {
         thread_num
     };
 
-    let hash = hash
-        .chars()
-        .into_iter()
-        .map(|c| c.to_uppercase().to_string())
-        .collect();
-
-    let decrypter = bfa::Md5Decrypter::new();
-    decrypter.decrypt(hash, len, thread_num);
+    bfa::clack(String::from(hash), len, thread_num);
 }
