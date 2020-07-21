@@ -1,22 +1,77 @@
 use md5::{Digest, Md5};
 use std::assert;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::thread::JoinHandle;
 
 mod code_points;
 use code_points::CodePoints;
 
-pub fn clack(hex_str: String, max_len: usize, thread_num: usize) {
-    let hex = Arc::new(to_hex(hex_str));
-    let finished = Arc::new(Mutex::new(false));
-    let mut threads = Vec::with_capacity(thread_num);
+pub use code_points::parse_start_code;
 
-    for start in 0..thread_num {
-        let arc_hex_val = hex.clone();
-        let arc_finished = finished.clone();
+pub struct Clacker {
+    max_len: usize,
+    thread_num: usize,
+    start_code: Vec<usize>,
+    hex: Arc<Vec<u8>>,
+    finished: Arc<AtomicBool>,
+    canceled: Arc<AtomicBool>,
+    saved_cp: Arc<Mutex<Vec<Vec<usize>>>>,
+}
 
-        threads.push(thread::spawn(move || {
-            let mut cps = CodePoints::new(thread_num, start);
+impl Clacker {
+    pub fn new(hex_str: String, max_len: usize, thread_num: usize, start_code: Vec<usize>) -> Self {
+        Clacker {
+            max_len: max_len,
+            thread_num: thread_num,
+            start_code: start_code,
+            hex: Arc::new(to_hex(hex_str)),
+            finished: Arc::new(AtomicBool::new(false)),
+            canceled: Arc::new(AtomicBool::new(false)),
+            saved_cp: Arc::new(Mutex::new(Vec::with_capacity(thread_num))),
+        }
+    }
+
+    pub fn clack(self: &Self) {
+        let mut threads = Vec::with_capacity(self.thread_num);
+        for start in 0..self.thread_num {
+            threads.push(self.decode(start));
+        }
+        self.wait_cancel();
+        for handle in threads {
+            handle.join().unwrap();
+        }
+        let fini = self.finished.load(Ordering::Relaxed);
+        let canc = self.canceled.load(Ordering::Relaxed);
+        if !fini {
+            if canc {
+                println!("Canceled.");
+                self.to_saved_str();
+            } else {
+                println!("Not found.");
+                let next = (0..self.max_len)
+                    .into_iter()
+                    .map(|_| String::from("0"))
+                    .collect::<Vec<String>>()
+                    .join("-");
+                println!("{}", next);
+            }
+        }
+    }
+
+    fn decode(self: &Self, start: usize) -> JoinHandle<()> {
+        let thread_num = self.thread_num;
+        let max_len = self.max_len;
+        let start_code = self.start_code.clone();
+
+        let arc_hex_val = self.hex.clone();
+        let arc_finished = self.finished.clone();
+        let arc_canceled = self.canceled.clone();
+        let arc_saved = self.saved_cp.clone();
+
+        thread::spawn(move || {
+            let mut cps = CodePoints::new(thread_num, start, start_code);
             let mut checked = 0;
 
             loop {
@@ -28,8 +83,7 @@ pub fn clack(hex_str: String, max_len: usize, thread_num: usize) {
                 }
 
                 if *arc_hex_val == hashed_cp {
-                    let mut flag = arc_finished.lock().unwrap();
-                    *flag = true;
+                    arc_finished.store(true, Ordering::Relaxed);
                     println!("{}", String::from_utf8(cp).unwrap());
                     return;
                 }
@@ -37,18 +91,57 @@ pub fn clack(hex_str: String, max_len: usize, thread_num: usize) {
                 checked += 1;
 
                 if checked == 10000 {
-                    let flag = arc_finished.lock().unwrap();
-                    if *flag {
+                    if arc_finished.load(Ordering::Relaxed) {
+                        return;
+                    } else if arc_canceled.load(Ordering::Relaxed) {
+                        let mut saved = arc_saved.lock().unwrap();
+                        (*saved).push(cps.value());
                         return;
                     }
                     checked = 0;
                 }
             }
-        }));
+        })
     }
 
-    for handle in threads {
-        handle.join().unwrap();
+    fn wait_cancel(self: &Self) {
+        let arc_canceled = self.canceled.clone();
+        thread::spawn(move || loop {
+            let mut s = String::default();
+
+            match std::io::stdin().read_line(&mut s) {
+                Ok(_) => (),
+                Err(_) => continue,
+            }
+
+            let cancel = match s.trim() {
+                "q" | "Q" => true,
+                _ => continue,
+            };
+
+            if cancel {
+                arc_canceled.store(true, Ordering::Relaxed);
+                return;
+            }
+        });
+    }
+
+    fn to_saved_str(self: &Self) {
+        let saved = self.saved_cp.lock().unwrap();
+
+        let mut saved_str = (*saved)
+            .iter()
+            .map(|v| {
+                v.iter()
+                    .skip(1)
+                    .map(|i| format!("{:02}", i))
+                    .collect::<Vec<String>>()
+                    .join("-")
+            })
+            .collect::<Vec<String>>();
+
+        saved_str.sort();
+        println!("{}", saved_str[0]);
     }
 }
 
