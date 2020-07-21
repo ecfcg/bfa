@@ -10,19 +10,21 @@ pub(crate) struct CodePoints {
 }
 
 impl CodePoints {
-    pub(crate) fn new(step: usize, start: usize) -> Self {
+    pub(crate) fn new(step: usize, start: usize, mut saved: Vec<usize>) -> Self {
         assert!(start < step);
         assert!(0 < step);
 
         let all_chars = ASCII.as_bytes().iter().map(|&u| u).collect::<Vec<u8>>();
         let max_point = all_chars.len();
+        let mut value = vec![start];
+        value.append(&mut saved);
 
         assert!(step < max_point);
 
         CodePoints {
             all_chars: all_chars,
             max_point: max_point,
-            value: vec![start],
+            value: value,
             step: step,
         }
     }
@@ -64,6 +66,18 @@ impl CodePoints {
             self.value[0] = point;
         }
     }
+
+    pub(crate) fn value(self: Self) -> Vec<usize> {
+        self.value
+    }
+}
+
+pub fn parse_start_code(start_code: &str) -> Vec<usize> {
+    start_code
+        .split("-")
+        .into_iter()
+        .map(|s| s.parse().unwrap())
+        .collect()
 }
 
 #[cfg(test)]
@@ -72,7 +86,7 @@ mod test {
 
     #[test]
     fn test_new() {
-        let points = CodePoints::new(5, 3);
+        let points = CodePoints::new(5, 3, Vec::new());
         assert_eq!(points.max_point, 95);
         assert_eq!(points.value, vec![3]);
         assert_eq!(points.step, 5);
@@ -80,14 +94,14 @@ mod test {
 
     #[test]
     fn test_next() {
-        let mut points = CodePoints::new(5, 3);
+        let mut points = CodePoints::new(5, 3, Vec::new());
         assert_eq!(points.next(), vec!['c' as u8]);
         assert_eq!(points.next(), vec!['h' as u8]);
     }
 
     #[test]
     fn test_increment() {
-        let mut points = CodePoints::new(5, 3);
+        let mut points = CodePoints::new(5, 3, Vec::new());
         assert_eq!(points.value, vec![3]);
 
         points.increment();
@@ -100,5 +114,12 @@ mod test {
         points.value = vec![94, 94];
         points.increment();
         assert_eq!(points.value, vec![4, 0, 0]);
+    }
+
+    #[test]
+    fn test_parse_start_code() {
+        assert_eq!(parse_start_code("0"), vec![0]);
+        assert_eq!(parse_start_code("10-01"), vec![10, 1]);
+        assert_eq!(parse_start_code("010-01-09-99"), vec![10, 1, 9, 99]);
     }
 }
